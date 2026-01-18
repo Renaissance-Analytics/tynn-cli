@@ -1,0 +1,107 @@
+\
+#!/usr/bin/env bash
+# Copy specific Cursor browser screenshots to project folders
+# Deletes source file on successful copy
+#
+# Usage:
+#   copy-screenshots file1.png:dest1 file2.png:dest2 ...
+#
+# Env:
+#   CURSOR_TEMP_BASE   - override Cursor temp base directory
+#   SCREENSHOTS_DIR    - override target base directory (default: public/screenshots)
+
+set -euo pipefail
+
+# Best-effort default for Git Bash on Windows
+_guess_user() {
+  if [[ -n "${WINUSER:-}" ]]; then
+    printf "%s" "$WINUSER"
+    return
+  fi
+
+  # Try Windows %USERNAME%
+  local u
+  u="$(cmd.exe /c echo %USERNAME% 2>/dev/null | tr -d '\r' || true)"
+  if [[ -n "$u" && "$u" != "%USERNAME%" ]]; then
+    printf "%s" "$u"
+    return
+  fi
+
+  printf "%s" "${USERNAME:-${USER:-unknown}}"
+}
+
+WIN_USER="$(_guess_user)"
+temp_base_default="/c/Users/${WIN_USER}/AppData/Local/Temp/cursor-browser-extension"
+temp_base="${CURSOR_TEMP_BASE:-$temp_base_default}"
+target_base="${SCREENSHOTS_DIR:-public/screenshots}"
+
+# Find newest temp folder
+src_dir="$(ls -td "${temp_base}"/*/ 2>/dev/null | head -1 || true)"
+
+if [[ -z "${src_dir}" ]]; then
+  echo "❌ No cursor-browser-extension temp folders found"
+  echo "   Looked in: ${temp_base}"
+  echo ""
+  echo "Tip: set CURSOR_TEMP_BASE if your temp path differs."
+  exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: copy-screenshots file1.png:destfolder [file2.png:destfolder] ..."
+  echo ""
+  echo "Available files in ${src_dir}:"
+  ls -1 "${src_dir}"*.png 2>/dev/null | xargs -n1 basename || true
+  exit 1
+fi
+
+echo "📂 Source dir:  ${src_dir}"
+echo "📁 Target base: ${target_base}"
+echo ""
+
+copied=0
+failed=0
+
+for mapping in "$@"; do
+  filename="${mapping%%:*}"
+  destfolder="${mapping##*:}"
+
+  if [[ "$mapping" != *:* ]]; then
+    echo "❌ Invalid mapping: '$mapping' (expected file:destfolder)"
+    ((failed++))
+    continue
+  fi
+
+  src="${src_dir}${filename}"
+  dest_dir="${target_base}/${destfolder}"
+  dest="${dest_dir}/${filename}"
+
+  mkdir -p "$dest_dir"
+
+  if [[ ! -f "$src" ]]; then
+    echo "❌ NOT FOUND: ${filename}"
+    echo "   Expected: ${src}"
+    ((failed++))
+    continue
+  fi
+
+  if cp "$src" "$dest" 2>/dev/null; then
+    if rm "$src" 2>/dev/null; then
+      echo "✅ ${filename} → ${destfolder}/ (deleted source)"
+    else
+      echo "✅ ${filename} → ${destfolder}/ (⚠️ couldn't delete source)"
+    fi
+    ((copied++))
+  else
+    err="$(cp "$src" "$dest" 2>&1 || true)"
+    echo "❌ FAILED: ${filename} → ${destfolder}/"
+    echo "   Source: ${src}"
+    echo "   Dest:   ${dest}"
+    echo "   Error:  ${err}"
+    ((failed++))
+  fi
+done
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Copied: ${copied}  Failed: ${failed}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

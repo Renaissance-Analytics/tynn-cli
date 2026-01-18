@@ -1,0 +1,8 @@
+# Local config (user-specific settings)
+tynn.config
+
+# Custom user overrides
+.custom/
+
+# Sandbox test projects (local only)
+sandbox/

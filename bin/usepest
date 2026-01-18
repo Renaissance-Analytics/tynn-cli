@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Set up Pest 4 testing framework for Laravel projects
+#
+# Usage:
+#   usepest              - Install Pest 4
+#   usepest --browser    - Install Pest 4 with browser testing support
+#
+# This script:
+# 1. Removes PHPUnit (if present)
+# 2. Installs Pest 4
+# 3. Initializes Pest configuration
+# 4. Optionally sets up browser testing (with --browser flag)
+
+set -euo pipefail
+
+# Source bashrc to load aliases (e.g., composer might be an alias)
+if [[ -f "${HOME}/.bashrc" ]]; then
+  source "${HOME}/.bashrc" 2>/dev/null || true
+  shopt -s expand_aliases 2>/dev/null || true
+fi
+
+# Parse flags
+BROWSER_FLAG=false
+for arg in "$@"; do
+  case "$arg" in
+    --browser)
+      BROWSER_FLAG=true
+      ;;
+    *)
+      echo "⚠️  Unknown argument: $arg" >&2
+      echo "Usage: usepest [--browser]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Check if we're in a Laravel/PHP project
+if [[ ! -f "composer.json" ]]; then
+  echo "❌ No composer.json found. Are you in a PHP/Laravel project directory?"
+  exit 1
+fi
+
+# Check for required commands
+command -v composer >/dev/null 2>&1 || { echo "❌ composer command not found. Please install Composer first." >&2; exit 1; }
+
+echo "⚡ Setting up Pest 4..."
+
+# Step 1: Remove PHPUnit if it exists
+if composer show phpunit/phpunit >/dev/null 2>&1; then
+  echo "📦 Removing PHPUnit..."
+  echo "Expect this look like it failed, but it's okay"
+  composer remove phpunit/phpunit --no-interaction >/dev/null 2>&1 || true
+else
+  echo "✅ PHPUnit not found (or already removed)"
+fi
+
+# Step 2: Install Pest
+echo "📦 Installing Pest 4..."
+echo "Expect this look like it failed, but it's okay"
+# Pipe "no" to skip Pest's "wanna show pest some love" interactive prompt
+yes n | composer require pestphp/pest --dev --with-all-dependencies --no-scripts --no-interaction >/dev/null 2>&1 && echo "✅" || echo "❌"
+
+# Step 2.5: Clean up vendor folder to avoid autoloader conflicts
+# Removing PHPUnit and adding Pest can cause autoloader errors, so we rebuild
+if [[ -d "vendor" ]]; then
+  echo "🧹 Cleaning vendor folder to resolve autoloader conflicts..."
+  rm -rf vendor
+  echo "📦 Reinstalling dependencies..."
+  composer install --no-interaction --no-scripts >/dev/null 2>&1 && echo "✅" || echo "❌"
+fi
+
+# Step 3: Initialize Pest
+echo "⚡ Initializing Pest configuration..."
+php vendor/bin/pest --init
+
+# Step 4: Browser testing setup (if flag provided)
+if [[ "$BROWSER_FLAG" == "true" ]]; then
+  echo "🌐 Setting up browser testing support..."
+  
+  # Check for npm/node
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "⚠️  npm not found. Browser testing requires Node.js/npm."
+    echo "   Please install Node.js first, then run:"
+    echo "   composer require pestphp/pest-plugin-browser --dev"
+    echo "   npm install playwright@latest"
+    echo "   npx playwright install"
+    exit 1
+  fi
+  
+  # Install browser plugin
+  echo "📦 Installing Pest browser plugin..."
+  yes n | composer require pestphp/pest-plugin-browser --dev --no-interaction >/dev/null 2>&1 && echo "✅" || echo "❌"
+  
+  # Install Playwright
+  echo "📦 Installing Playwright..."
+  npm install playwright@latest >/dev/null 2>&1 && echo "✅" || echo "❌"
+  
+  # Install Playwright browsers
+  echo "📦 Installing Playwright browsers..."
+  npx playwright install >/dev/null 2>&1 && echo "✅" || echo "❌"
+  
+  # Add screenshots directory to .gitignore
+  if [[ -f ".gitignore" ]]; then
+    if ! grep -q "^tests/Browser/Screenshots" .gitignore; then
+      echo "" >> .gitignore
+      echo "# Pest browser test screenshots" >> .gitignore
+      echo "tests/Browser/Screenshots" >> .gitignore
+      echo "✅ Added tests/Browser/Screenshots to .gitignore"
+    else
+      echo "✅ tests/Browser/Screenshots already in .gitignore"
+    fi
+  else
+    echo "⚠️  .gitignore not found. Consider adding: tests/Browser/Screenshots"
+  fi
+  
+  echo "✅ Browser testing support installed!"
+fi
+
+echo ""
+echo "✅ Pest 4 setup complete!"
+if [[ "$BROWSER_FLAG" == "true" ]]; then
+  echo ""
+  echo "💡 You can now write browser tests. Example:"
+  echo "   it('may welcome the user', function () {"
+  echo "       \$page = visit('/');"
+  echo "       \$page->assertSee('Welcome');"
+  echo "   });"
+fi
+echo ""
+echo "🚀 Run your tests with: php vendor/bin/pest"

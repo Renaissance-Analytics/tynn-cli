@@ -1,0 +1,78 @@
+\
+#!/usr/bin/env bash
+# Run commands in a package directory under packages/
+#
+# Usage:
+#   pkg <command>              - auto-detects single package
+#   pkg <package-name> <cmd>   - runs in specific package
+#
+# Examples:
+#   pkg php vendor/bin/pest
+#   pkg laravel-fun-lab php vendor/bin/pest
+
+set -euo pipefail
+
+pkg_dir="packages"
+
+# Find project root by looking for packages/ directory
+search_dir="$PWD"
+while [[ "$search_dir" != "/" && "$search_dir" != "/c" ]]; do
+  if [[ -d "$search_dir/$pkg_dir" ]]; then
+    break
+  fi
+  search_dir="$(dirname "$search_dir")"
+done
+
+if [[ ! -d "$search_dir/$pkg_dir" ]]; then
+  echo "Error: No 'packages/' directory found in project hierarchy" >&2
+  exit 1
+fi
+
+packages_path="$search_dir/$pkg_dir"
+package_count="$(find "$packages_path" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+target=""
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: pkg <command> OR pkg <package-name> <command> [args...]" >&2
+  echo "Packages:" >&2
+  ls -1 "$packages_path" >&2
+  exit 1
+fi
+
+# If first arg is a package name (directory exists), use it
+if [[ -d "$packages_path/$1" ]]; then
+  target="$packages_path/$1"
+  shift
+# If only one package exists, auto-select it
+elif [[ "$package_count" -eq 1 ]]; then
+  target="$(find "$packages_path" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)"
+else
+  echo "Multiple packages found. Specify package name:" >&2
+  ls -1 "$packages_path" >&2
+  exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "No command specified." >&2
+  exit 1
+fi
+
+cmd="$1"
+shift
+
+# Execute command in package directory
+# Source bashrc in subshell to make aliases available (aliases aren't available in subshells by default)
+# This preserves PATH and all environment variables, and makes aliases from bashrc available
+if [[ -f "${HOME}/.bashrc" ]]; then
+  # Source bashrc to load aliases, enable alias expansion, then execute command
+  # Use eval to force alias expansion (shopt -s expand_aliases + eval ensures aliases work)
+  # Build the command string with proper quoting for all arguments
+  cmd_str="$cmd"
+  for arg in "$@"; do
+    cmd_str="$cmd_str \"$arg\""
+  done
+  (cd "$target" && bash -c "source ~/.bashrc 2>/dev/null; shopt -s expand_aliases; eval '$cmd_str'")
+else
+  # No bashrc - execute directly
+  (cd "$target" && "$cmd" "$@")
+fi

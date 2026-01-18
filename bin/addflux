@@ -1,0 +1,17 @@
+\
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Source bashrc to load aliases (e.g., composer might be an alias)
+if [[ -f "${HOME}/.bashrc" ]]; then
+  source "${HOME}/.bashrc" 2>/dev/null || true
+fi
+
+if [[ ! -f "composer.json" ]]; then
+  echo "❌ No composer.json found. Are you in a PHP/Laravel project directory?"
+  exit 1
+fi
+
+echo "⚡ Installing livewire/flux-pro..."
+composer require livewire/flux-pro
+echo "✅ Flux Pro installed successfully."

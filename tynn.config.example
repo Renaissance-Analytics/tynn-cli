@@ -1,0 +1,10 @@
+# Tynn CLI Configuration
+# Copy this file to tynn.config and customize for your environment
+# This file is ignored by git
+
+# Path to your sandbox/test project directory
+# Used by the 'sandbox' command to quickly run commands in your test project
+SANDBOX_PATH=""
+
+# Example:
+# SANDBOX_PATH="/c/_Projects/tynn.ai/integrations/tynn-cli/sandbox/test-laravel-project"

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# sandbox - Run commands in your configured sandbox directory
+#
+# Usage:
+#   sandbox <command> [args...]    - Run command in sandbox directory
+#   sandbox                        - cd to sandbox directory (in subshell)
+#   sandbox --path                 - Print sandbox path
+#   sandbox --help                 - Show this help
+#
+# Configuration:
+#   Set SANDBOX_PATH in tynn.config (copy from tynn.config.example)
+#
+# Examples:
+#   sandbox resetme --demo
+#   sandbox php artisan migrate
+#   sandbox npm run dev
+
+set -euo pipefail
+
+# Source bashrc to load aliases
+if [[ -f "${HOME}/.bashrc" ]]; then
+  source "${HOME}/.bashrc" 2>/dev/null || true
+  shopt -s expand_aliases 2>/dev/null || true
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+die()  { printf "❌ %s\n" "$*" >&2; exit 1; }
+info() { printf "⚡ %s\n" "$*"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Find tynn.config
+# ─────────────────────────────────────────────────────────────────────────────
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_FILE="$REPO_ROOT/tynn.config"
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  die "tynn.config not found. Copy tynn.config.example to tynn.config and set SANDBOX_PATH"
+fi
+
+# Source config
+source "$CONFIG_FILE"
+
+if [[ -z "${SANDBOX_PATH:-}" ]]; then
+  die "SANDBOX_PATH not set in tynn.config"
+fi
+
+if [[ ! -d "$SANDBOX_PATH" ]]; then
+  die "SANDBOX_PATH directory does not exist: $SANDBOX_PATH"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Handle flags
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [[ $# -eq 0 ]]; then
+  # No args - just print path and hint
+  echo "$SANDBOX_PATH"
+  echo ""
+  echo "💡 Use: cd \$(sandbox) to change to sandbox directory"
+  exit 0
+fi
+
+case "$1" in
+  --path)
+    echo "$SANDBOX_PATH"
+    exit 0
+    ;;
+  --help|-h)
+    sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+    exit 0
+    ;;
+esac
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Run command in sandbox
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd="$1"
+shift
+
+info "Running in: $SANDBOX_PATH"
+
+# Build command string with proper quoting
+cmd_str="$cmd"
+for arg in "$@"; do
+  # Escape single quotes in args
+  escaped_arg="${arg//\'/\'\\\'\'}"
+  cmd_str="$cmd_str '$escaped_arg'"
+done
+
+# Execute in sandbox directory with aliases available
+(cd "$SANDBOX_PATH" && bash -c "source ~/.bashrc 2>/dev/null; shopt -s expand_aliases; eval '$cmd_str'")

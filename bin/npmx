@@ -1,0 +1,95 @@
+\
+#!/usr/bin/env bash
+# Run npm commands in a subdirectory containing package.json
+# Allows running npm commands without cd-ing into server/client directories
+#
+# Usage:
+#   npmx <directory> <npm-args...>   - runs in specific directory
+#   npmx <npm-args...>               - auto-detects single npm directory
+#
+# Examples:
+#   npmx server test -- --run tests/services/chat/clarifier.test.js
+#   npmx client build
+#   npmx test                        - auto-detects if only one package.json subdir
+
+set -euo pipefail
+
+search_dir="$PWD"
+npm_dirs=()
+
+# Walk up directory tree looking for directories with package.json subdirs
+while [[ "$search_dir" != "/" && "$search_dir" != "/c" ]]; do
+  for subdir in server client frontend backend api web app packages; do
+    if [[ -f "$search_dir/$subdir/package.json" ]]; then
+      npm_dirs+=("$search_dir/$subdir")
+    fi
+  done
+
+  if [[ -f "$search_dir/package.json" ]]; then
+    npm_dirs+=("$search_dir")
+  fi
+
+  if [[ ${#npm_dirs[@]} -gt 0 ]]; then
+    break
+  fi
+  search_dir="$(dirname "$search_dir")"
+done
+
+if [[ ${#npm_dirs[@]} -eq 0 ]]; then
+  echo "❌ No package.json found in project hierarchy" >&2
+  echo "   Looked for: server/, client/, frontend/, backend/, api/, web/, app/, packages/ (and root)" >&2
+  exit 1
+fi
+
+target=""
+
+# If first arg is a directory name that contains package.json, use it
+if [[ -n "${1:-}" ]]; then
+  for dir in "${npm_dirs[@]}"; do
+    dname="$(basename "$dir")"
+    if [[ "$dname" == "$1" ]]; then
+      target="$dir"
+      shift
+      break
+    fi
+  done
+fi
+
+# Auto-detect target if not specified
+if [[ -z "$target" ]]; then
+  subdir_npm_dirs=()
+  for dir in "${npm_dirs[@]}"; do
+    if [[ "$dir" != "$search_dir" ]]; then
+      subdir_npm_dirs+=("$dir")
+    fi
+  done
+
+  dirs_to_check=("${npm_dirs[@]}")
+  if [[ ${#subdir_npm_dirs[@]} -gt 0 ]]; then
+    dirs_to_check=("${subdir_npm_dirs[@]}")
+  fi
+
+  if [[ ${#dirs_to_check[@]} -eq 1 ]]; then
+    target="${dirs_to_check[0]}"
+  else
+    echo "Multiple npm directories found. Specify which one:" >&2
+    for dir in "${dirs_to_check[@]}"; do
+      echo "   $(basename "$dir")" >&2
+    done
+    echo "" >&2
+    echo "Usage: npmx <directory> <npm-args...>" >&2
+    exit 1
+  fi
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "No npm command specified" >&2
+  echo "Usage: npmx <directory> <npm-args...>" >&2
+  exit 1
+fi
+
+dname="$(basename "$target")"
+echo "Running in ${dname}/: npm $*"
+echo ""
+
+(cd "$target" && npm "$@")
