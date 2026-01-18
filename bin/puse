@@ -7,17 +7,21 @@
 #   puse --stack             - Show detected stack
 #   puse --help              - Show this help
 #
+# Options:
+#   --lic <name|index>       - Use license from tynn.config (by name or index)
+#   --browser                - Enable browser testing (for pest, playwright)
+#
 # Tools by Stack:
-#   Laravel:     pest, pest --browser, flux
+#   Laravel:     pest, pest --browser, flux (requires --lic)
 #   Node.js:     vitest, jest, playwright, prisma, drizzle
 #   Django:      pytest, playwright
 #   Go:          (coming soon)
 #
 # Examples:
-#   puse pest                - Install Pest (Laravel) or suggest alternative
+#   puse pest                - Install Pest (Laravel)
 #   puse pest --browser      - Install Pest with browser testing
+#   puse flux --lic myflux   - Install Flux Pro with license
 #   puse vitest              - Install Vitest (Node.js)
-#   puse flux                - Install Flux UI (Laravel)
 
 set -euo pipefail
 
@@ -37,12 +41,20 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$REPO_ROOT/lib/helpers.sh"
 source "$REPO_ROOT/lib/stacks.sh"
+source "$REPO_ROOT/lib/licenses.sh"
 
 # Source config if exists
 CONFIG_FILE="$REPO_ROOT/tynn.config"
 if [[ -f "$CONFIG_FILE" ]]; then
   source "$CONFIG_FILE"
 fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global options (parsed from args)
+# ─────────────────────────────────────────────────────────────────────────────
+
+LIC_REF=""
+BROWSER_FLAG=false
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool Installers
@@ -140,7 +152,6 @@ install_vitest() {
   # Add test script to package.json if not present
   if ! grep -q '"test"' package.json; then
     log "Adding test script to package.json..."
-    # Use node to safely modify package.json
     node -e "
       const fs = require('fs');
       const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -207,11 +218,63 @@ install_playwright_node() {
 }
 
 install_flux() {
+  local stack="$1"
+  local lic_ref="$2"
+
   need_cmd composer
   need_cmd php
   need_file artisan
 
-  log "Installing Flux UI..."
+  # Get license params
+  local lic_params=""
+  local lic_email=""
+  local lic_key=""
+
+  if [[ -n "$lic_ref" ]]; then
+    lic_params=$(get_license "flux" "$stack" "$lic_ref") || true
+  elif has_license "flux" "$stack"; then
+    # Try to get first available license
+    lic_params=$(get_license "flux" "$stack" "0") || true
+  fi
+
+  if [[ -n "$lic_params" ]]; then
+    lic_email=$(lic_param "$lic_params" 0) || true
+    lic_key=$(lic_param "$lic_params" 1) || true
+  fi
+
+  if [[ -z "$lic_email" || -z "$lic_key" ]]; then
+    echo ""
+    warn "No license found for Flux."
+    echo ""
+    echo "Flux Pro requires a license. Options:"
+    echo ""
+    echo "1. Add license to tynn.config:"
+    echo "   LICENSES='["
+    echo "     {\"name\": \"myflux\", \"stack\": \"laravel\", \"tool\": \"flux\", \"params\": [\"email@example.com\", \"FL-XXXX-XXXX\"]}"
+    echo "   ]'"
+    echo ""
+    echo "2. Then run: puse flux --lic myflux"
+    echo ""
+    echo "3. Or purchase at: https://flux.livewire.com"
+    echo ""
+
+    if has_license "flux" "$stack"; then
+      echo "Available licenses:"
+      list_licenses "flux" "$stack"
+      echo ""
+    fi
+
+    die "License required for Flux Pro installation"
+  fi
+
+  log "Installing Flux Pro..."
+  log "Using license: $lic_email"
+
+  # Configure composer auth for flux-pro private repo
+  log "Configuring composer authentication..."
+  composer config repositories.flux-pro '{"type": "composer", "url": "https://composer.fluxui.dev"}' 2>/dev/null
+  composer config http-basic.composer.fluxui.dev "$lic_email" "$lic_key" 2>/dev/null
+  ok "Composer auth configured"
 
   # Check if Livewire is installed
   if ! composer show livewire/livewire >/dev/null 2>&1; then
@@ -219,15 +282,18 @@ install_flux() {
     composer require livewire/livewire >/dev/null 2>&1 && ok "Livewire installed" || die "Livewire install failed"
   fi
 
-  # Install Flux
-  composer require livewire/flux >/dev/null 2>&1 && ok "Flux installed" || die "Flux install failed"
+  # Install Flux Pro
+  log "Installing Flux Pro package..."
+  composer require livewire/flux-pro >/dev/null 2>&1 && ok "Flux Pro installed" || die "Flux Pro install failed"
 
-  # Publish assets
-  log "Publishing Flux assets..."
+  # Publish assets and run install
+  log "Running Flux installation..."
   php artisan flux:install
 
   echo ""
-  ok "Flux UI setup complete!"
+  ok "Flux Pro setup complete!"
+  echo ""
+  echo "💡 Documentation: https://fluxui.dev/docs"
 }
 
 install_pytest_django() {
@@ -286,6 +352,11 @@ declare -A TOOL_STACKS=(
   ["drizzle"]="node"
 )
 
+# Tools that require licenses
+declare -A TOOL_REQUIRES_LICENSE=(
+  ["flux"]="true"
+)
+
 # Get tools available for a stack
 get_tools_for_stack() {
   local stack="$1"
@@ -312,8 +383,6 @@ is_tool_supported() {
 route_tool() {
   local tool="$1"
   local stack="$2"
-  shift 2
-  local extra_args=("$@")
 
   # Check stack restrictions
   if ! is_stack_allowed "$stack"; then
@@ -338,18 +407,14 @@ route_tool() {
       if [[ "$stack" != "laravel" ]]; then
         die "Pest is only for Laravel. For Node.js, try: puse vitest"
       fi
-      local browser=false
-      for arg in "${extra_args[@]:-}"; do
-        [[ "$arg" == "--browser" ]] && browser=true
-      done
-      install_pest "$browser"
+      install_pest "$BROWSER_FLAG"
       ;;
 
     flux)
       if [[ "$stack" != "laravel" ]]; then
         die "Flux is only for Laravel"
       fi
-      install_flux
+      install_flux "$stack" "$LIC_REF"
       ;;
 
     vitest)
@@ -417,48 +482,79 @@ show_list() {
 
   tools=$(get_tools_for_stack "$stack")
   for tool in $tools; do
-    echo "  - $tool"
+    local note=""
+    if [[ -v TOOL_REQUIRES_LICENSE[$tool] ]]; then
+      if has_license "$tool" "$stack"; then
+        note=" (license configured)"
+      else
+        note=" (requires --lic)"
+      fi
+    fi
+    echo "  - $tool$note"
   done
 }
 
-main() {
-  if [[ $# -eq 0 ]]; then
+parse_args() {
+  local tool=""
+  local positional=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h)
+        show_help
+        exit 0
+        ;;
+      --stack)
+        show_stack
+        exit 0
+        ;;
+      --list|-l)
+        show_list
+        exit 0
+        ;;
+      --lic)
+        if [[ -z "${2:-}" ]]; then
+          die "--lic requires a license name or index"
+        fi
+        LIC_REF="$2"
+        shift 2
+        ;;
+      --browser)
+        BROWSER_FLAG=true
+        shift
+        ;;
+      -*)
+        die "Unknown option: $1. Use --help for usage."
+        ;;
+      *)
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  # First positional arg is the tool
+  if [[ ${#positional[@]} -eq 0 ]]; then
     show_help
     exit 0
   fi
 
-  case "$1" in
-    --help|-h)
-      show_help
-      exit 0
-      ;;
-    --stack)
-      show_stack
-      exit 0
-      ;;
-    --list|-l)
-      show_list
-      exit 0
-      ;;
-    -*)
-      die "Unknown option: $1. Use --help for usage."
-      ;;
-    *)
-      # It's a tool name
-      local tool="$1"
-      shift
+  echo "${positional[0]}"
+}
 
-      local stack
-      stack=$(detect_stack)
+main() {
+  local tool
+  tool=$(parse_args "$@")
 
-      if [[ "$stack" == "$STACK_UNKNOWN" ]]; then
-        die "Could not detect project stack. Are you in a project directory?"
-      fi
+  local stack
+  stack=$(detect_stack)
 
-      log "Detected stack: $(stack_name "$stack")"
-      route_tool "$tool" "$stack" "$@"
-      ;;
-  esac
+  if [[ "$stack" == "$STACK_UNKNOWN" ]]; then
+    die "Could not detect project stack. Are you in a project directory?"
+  fi
+
+  log "Detected stack: $(stack_name "$stack")"
+  route_tool "$tool" "$stack"
 }
 
 main "$@"
