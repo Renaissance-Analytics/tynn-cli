@@ -1,6 +1,11 @@
 {
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "tynn"
   ],
-  "enableAllProjectMcpServers": true
+  "permissions": {
+    "allow": [
+      "Bash(env -i HOME=\"$HOME\" PATH=\"/c/_Projects/tynn.ai/integrations/tynn-cli/.custom:/c/_Projects/tynn.ai/integrations/tynn-cli/bin:/usr/bin:/bin\" bash -c:*)"
+    ]
+  }
 }

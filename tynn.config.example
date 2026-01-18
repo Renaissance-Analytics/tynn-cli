@@ -2,9 +2,45 @@
 # Copy this file to tynn.config and customize for your environment
 # This file is ignored by git
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Sandbox
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Path to your sandbox/test project directory
 # Used by the 'sandbox' command to quickly run commands in your test project
 SANDBOX_PATH=""
 
 # Example:
-# SANDBOX_PATH="/c/_Projects/tynn.ai/integrations/tynn-cli/sandbox/test-laravel-project"
+# SANDBOX_PATH="/c/_Projects/my-test-project"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stack Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Force a specific stack (bypasses auto-detection)
+# Values: laravel, node, node-prisma, node-drizzle, node-knex, node-sequelize,
+#         node-typeorm, django, flask-alembic, go-migrate
+FORCE_STACK=""
+
+# Limit which stacks are allowed (comma-separated, empty = all allowed)
+# Commands will error if detected stack is not in this list
+ALLOWED_STACKS=""
+
+# Explicitly disallow certain stacks (comma-separated)
+# Commands will error if detected stack is in this list
+DISALLOWED_STACKS=""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tool Restrictions (per stack)
+# ─────────────────────────────────────────────────────────────────────────────
+# Limit which tools `puse` can install for each stack
+# Format: STACK_TOOLS_<STACK_ID>="tool1,tool2"
+# Empty = all tools allowed for that stack
+
+# Example: Only allow pest and flux for Laravel projects
+# STACK_TOOLS_LARAVEL="pest,flux"
+
+# Example: Only allow vitest for Node projects
+# STACK_TOOLS_NODE="vitest"
+# STACK_TOOLS_NODE_PRISMA="vitest,playwright"
+# STACK_TOOLS_NODE_DRIZZLE="vitest"

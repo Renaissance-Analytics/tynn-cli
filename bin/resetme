@@ -1,42 +1,41 @@
 #!/usr/bin/env bash
-# resetme - Reset database/state for detected project type
+# resetme - Reset database/state for detected stack
 #
-# Usage: resetme [--seed] [--demo] [--dry-run] [--help]
+# Usage: resetme [--seed] [--demo] [--dry-run] [--stack] [--help]
 #
 # Options:
 #   --seed      Run default seeder after migrations
 #   --demo      Run default seeder + DemoSeeder (implies --seed)
 #   --dry-run   Show what would be executed without running
+#   --stack     Show detected stack and exit
 #   --help      Show this help message
 #
-# Supported environments:
-#   - Laravel/PHP (artisan + composer.json)
-#   - Node.js with Prisma (prisma in package.json)
-#   - Node.js with Knex (knex in package.json)
-#   - Node.js with Drizzle (drizzle-kit in package.json)
-#   - Python/Django (manage.py + django)
-#   - Python/Flask with Alembic (flask + alembic)
-#   - Go with golang-migrate (go.mod + migrate tool)
+# See STACKS.md for supported stacks and their reset behaviors.
 
 set -euo pipefail
 
-# Source bashrc to load aliases (e.g., php, composer might be aliases)
+# ─────────────────────────────────────────────────────────────────────────────
+# Setup
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Source bashrc to load aliases
 if [[ -f "${HOME}/.bashrc" ]]; then
   source "${HOME}/.bashrc" 2>/dev/null || true
   shopt -s expand_aliases 2>/dev/null || true
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# Find script directory and source libraries
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-log()  { printf "📂 %s\n" "$*"; }
-info() { printf "⚡ %s\n" "$*"; }
-warn() { printf "⚠️  %s\n" "$*" >&2; }
-die()  { printf "❌ %s\n" "$*" >&2; exit 1; }
-ok()   { printf "✅ %s\n" "$*"; }
+source "$REPO_ROOT/lib/helpers.sh"
+source "$REPO_ROOT/lib/stacks.sh"
 
-need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; }
+# Source config if exists
+CONFIG_FILE="$REPO_ROOT/tynn.config"
+if [[ -f "$CONFIG_FILE" ]]; then
+  source "$CONFIG_FILE"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Flags
@@ -45,12 +44,14 @@ need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $
 SEED=false
 DEMO=false
 DRY_RUN=false
+SHOW_STACK=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seed)    SEED=true; shift ;;
     --demo)    DEMO=true; SEED=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
+    --stack)   SHOW_STACK=true; shift ;;
     --help|-h)
       sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
       exit 0
@@ -67,94 +68,15 @@ done
 
 run() {
   if [[ "$DRY_RUN" == true ]]; then
-    info "[dry-run] $*"
+    log "[dry-run] $*"
   else
-    info "Running: $*"
+    log "Running: $*"
     "$@"
   fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Environment detection
-# ─────────────────────────────────────────────────────────────────────────────
-
-detect_env() {
-  # Laravel/PHP
-  if [[ -f "artisan" && -f "composer.json" ]]; then
-    echo "laravel"
-    return
-  fi
-
-  # Node.js projects
-  if [[ -f "package.json" ]]; then
-    local pkg
-    pkg=$(cat package.json)
-
-    # Prisma
-    if echo "$pkg" | grep -q '"prisma"' || [[ -f "prisma/schema.prisma" ]]; then
-      echo "prisma"
-      return
-    fi
-
-    # Drizzle
-    if echo "$pkg" | grep -q '"drizzle-kit"' || [[ -d "drizzle" ]]; then
-      echo "drizzle"
-      return
-    fi
-
-    # Knex
-    if echo "$pkg" | grep -q '"knex"' || [[ -f "knexfile.js" || -f "knexfile.ts" ]]; then
-      echo "knex"
-      return
-    fi
-
-    # Sequelize
-    if echo "$pkg" | grep -q '"sequelize"' || [[ -f ".sequelizerc" ]]; then
-      echo "sequelize"
-      return
-    fi
-
-    # TypeORM
-    if echo "$pkg" | grep -q '"typeorm"'; then
-      echo "typeorm"
-      return
-    fi
-  fi
-
-  # Python/Django
-  if [[ -f "manage.py" ]]; then
-    if [[ -f "requirements.txt" ]] && grep -qi "django" requirements.txt 2>/dev/null; then
-      echo "django"
-      return
-    fi
-    if [[ -f "pyproject.toml" ]] && grep -qi "django" pyproject.toml 2>/dev/null; then
-      echo "django"
-      return
-    fi
-    # Assume Django if manage.py exists
-    echo "django"
-    return
-  fi
-
-  # Python/Flask with Alembic
-  if [[ -d "migrations" && -f "migrations/alembic.ini" ]] || [[ -f "alembic.ini" ]]; then
-    echo "alembic"
-    return
-  fi
-
-  # Go with migrations
-  if [[ -f "go.mod" ]]; then
-    if [[ -d "migrations" ]] || [[ -d "db/migrations" ]]; then
-      echo "go-migrate"
-      return
-    fi
-  fi
-
-  echo "unknown"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Reset handlers for each environment
+# Reset handlers for each stack
 # ─────────────────────────────────────────────────────────────────────────────
 
 reset_laravel() {
@@ -175,17 +97,15 @@ reset_laravel() {
   ok "Laravel database reset complete"
 }
 
-reset_prisma() {
-  need_cmd npx
+reset_node_prisma() {
+  local pm_exec
+  pm_exec=$(node_pm_exec)
 
-  # Prisma reset drops all data and re-runs migrations
-  # --force skips confirmation prompt
-  run npx prisma migrate reset --force
+  run $pm_exec prisma migrate reset --force
 
   if [[ "$DEMO" == true ]]; then
-    # Convention: pass --demo flag to seed script
     if [[ -f "prisma/seed.ts" || -f "prisma/seed.js" ]]; then
-      run npx prisma db seed -- --demo
+      run $pm_exec prisma db seed -- --demo
     else
       warn "No prisma/seed.ts or prisma/seed.js found for demo seeding"
     fi
@@ -194,19 +114,19 @@ reset_prisma() {
   ok "Prisma database reset complete"
 }
 
-reset_drizzle() {
-  need_cmd npx
+reset_node_drizzle() {
+  local pm_exec pm_run
+  pm_exec=$(node_pm_exec)
+  pm_run=$(node_pm_run)
 
-  # Drizzle: drop and push schema
-  run npx drizzle-kit drop
-  run npx drizzle-kit push
+  run $pm_exec drizzle-kit drop
+  run $pm_exec drizzle-kit push
 
   if [[ "$SEED" == true ]]; then
-    # Convention: look for seed script in package.json
     if grep -q '"db:seed"' package.json 2>/dev/null; then
-      run npm run db:seed
+      run $pm_run db:seed
     elif [[ -f "src/db/seed.ts" || -f "db/seed.ts" ]]; then
-      run npx tsx src/db/seed.ts 2>/dev/null || run npx tsx db/seed.ts
+      run $pm_exec tsx src/db/seed.ts 2>/dev/null || run $pm_exec tsx db/seed.ts
     else
       warn "No seed script found (add 'db:seed' to package.json scripts)"
     fi
@@ -214,7 +134,7 @@ reset_drizzle() {
 
   if [[ "$DEMO" == true ]]; then
     if grep -q '"db:seed:demo"' package.json 2>/dev/null; then
-      run npm run db:seed:demo
+      run $pm_run db:seed:demo
     else
       warn "No db:seed:demo script found in package.json for demo seeding"
     fi
@@ -223,23 +143,22 @@ reset_drizzle() {
   ok "Drizzle database reset complete"
 }
 
-reset_knex() {
-  need_cmd npx
+reset_node_knex() {
+  local pm_exec
+  pm_exec=$(node_pm_exec)
 
-  # Rollback all and migrate fresh
-  run npx knex migrate:rollback --all
-  run npx knex migrate:latest
+  run $pm_exec knex migrate:rollback --all
+  run $pm_exec knex migrate:latest
 
   if [[ "$SEED" == true ]]; then
-    run npx knex seed:run
+    run $pm_exec knex seed:run
   fi
 
   if [[ "$DEMO" == true ]]; then
-    # Convention: demo seeds in seeds/demo directory or specific file
     if [[ -d "seeds/demo" ]]; then
-      run npx knex seed:run --specific=demo
+      run $pm_exec knex seed:run --specific=demo
     elif [[ -f "seeds/demo.js" || -f "seeds/demo.ts" ]]; then
-      run npx knex seed:run --specific=demo.js 2>/dev/null || run npx knex seed:run --specific=demo.ts
+      run $pm_exec knex seed:run --specific=demo.js 2>/dev/null || run $pm_exec knex seed:run --specific=demo.ts
     else
       warn "No demo seeds found (create seeds/demo/ directory or seeds/demo.js)"
     fi
@@ -248,23 +167,22 @@ reset_knex() {
   ok "Knex database reset complete"
 }
 
-reset_sequelize() {
-  need_cmd npx
+reset_node_sequelize() {
+  local pm_exec
+  pm_exec=$(node_pm_exec)
 
-  # Drop all tables and re-migrate
-  run npx sequelize-cli db:drop
-  run npx sequelize-cli db:create
-  run npx sequelize-cli db:migrate
+  run $pm_exec sequelize-cli db:drop
+  run $pm_exec sequelize-cli db:create
+  run $pm_exec sequelize-cli db:migrate
 
   if [[ "$SEED" == true ]]; then
-    run npx sequelize-cli db:seed:all
+    run $pm_exec sequelize-cli db:seed:all
   fi
 
   if [[ "$DEMO" == true ]]; then
-    # Convention: demo seeders have "demo" in filename
     if ls seeders/*demo* 1>/dev/null 2>&1; then
       for seeder in seeders/*demo*; do
-        run npx sequelize-cli db:seed --seed "$(basename "$seeder")"
+        run $pm_exec sequelize-cli db:seed --seed "$(basename "$seeder")"
       done
     else
       warn "No demo seeders found (create seeders/*demo*.js files)"
@@ -274,19 +192,19 @@ reset_sequelize() {
   ok "Sequelize database reset complete"
 }
 
-reset_typeorm() {
-  need_cmd npx
+reset_node_typeorm() {
+  local pm_exec pm_run
+  pm_exec=$(node_pm_exec)
+  pm_run=$(node_pm_run)
 
-  # TypeORM: drop schema and run migrations
-  run npx typeorm schema:drop
-  run npx typeorm migration:run
+  run $pm_exec typeorm schema:drop
+  run $pm_exec typeorm migration:run
 
   if [[ "$SEED" == true || "$DEMO" == true ]]; then
-    # Convention: look for seed script in package.json
     if grep -q '"db:seed"' package.json 2>/dev/null; then
-      run npm run db:seed
+      run $pm_run db:seed
     elif grep -q '"seed"' package.json 2>/dev/null; then
-      run npm run seed
+      run $pm_run seed
     else
       warn "No seed script found in package.json"
     fi
@@ -294,7 +212,7 @@ reset_typeorm() {
 
   if [[ "$DEMO" == true ]]; then
     if grep -q '"db:seed:demo"' package.json 2>/dev/null; then
-      run npm run db:seed:demo
+      run $pm_run db:seed:demo
     fi
   fi
 
@@ -302,22 +220,20 @@ reset_typeorm() {
 }
 
 reset_django() {
-  local python_cmd="python"
-  command -v python3 >/dev/null 2>&1 && python_cmd="python3"
-  need_cmd "$python_cmd"
+  local py_cmd="python"
+  command -v python3 >/dev/null 2>&1 && py_cmd="python3"
+  need_cmd "$py_cmd"
 
-  # Flush database and re-migrate
-  run $python_cmd manage.py flush --no-input
-  run $python_cmd manage.py migrate
+  run $py_cmd manage.py flush --no-input
+  run $py_cmd manage.py migrate
 
   if [[ "$SEED" == true ]]; then
-    # Convention: loaddata with fixtures or custom seed command
     if [[ -d "fixtures" ]]; then
       for fixture in fixtures/*.json; do
-        [[ -f "$fixture" ]] && run $python_cmd manage.py loaddata "$fixture"
+        [[ -f "$fixture" ]] && run $py_cmd manage.py loaddata "$fixture"
       done
-    elif grep -q '"seed"' manage.py 2>/dev/null || $python_cmd manage.py help seed >/dev/null 2>&1; then
-      run $python_cmd manage.py seed
+    elif $py_cmd manage.py help seed >/dev/null 2>&1; then
+      run $py_cmd manage.py seed
     else
       warn "No fixtures/ directory or seed command found"
     fi
@@ -325,9 +241,9 @@ reset_django() {
 
   if [[ "$DEMO" == true ]]; then
     if [[ -f "fixtures/demo.json" ]]; then
-      run $python_cmd manage.py loaddata fixtures/demo.json
-    elif $python_cmd manage.py help seed_demo >/dev/null 2>&1; then
-      run $python_cmd manage.py seed_demo
+      run $py_cmd manage.py loaddata fixtures/demo.json
+    elif $py_cmd manage.py help seed_demo >/dev/null 2>&1; then
+      run $py_cmd manage.py seed_demo
     else
       warn "No fixtures/demo.json or seed_demo command found for demo seeding"
     fi
@@ -336,28 +252,24 @@ reset_django() {
   ok "Django database reset complete"
 }
 
-reset_alembic() {
-  local python_cmd="python"
-  command -v python3 >/dev/null 2>&1 && python_cmd="python3"
-  need_cmd "$python_cmd"
+reset_flask_alembic() {
+  local py_cmd="python"
+  command -v python3 >/dev/null 2>&1 && py_cmd="python3"
+  need_cmd "$py_cmd"
 
-  # Check if using Flask-Migrate or standalone Alembic
   if command -v flask >/dev/null 2>&1 && [[ -f "migrations/alembic.ini" ]]; then
-    # Flask-Migrate
     run flask db downgrade base
     run flask db upgrade
   else
-    # Standalone Alembic
     run alembic downgrade base
     run alembic upgrade head
   fi
 
   if [[ "$SEED" == true || "$DEMO" == true ]]; then
-    # Convention: look for seed script
     if [[ -f "seed.py" ]]; then
-      run $python_cmd seed.py
+      run $py_cmd seed.py
     elif [[ -f "scripts/seed.py" ]]; then
-      run $python_cmd scripts/seed.py
+      run $py_cmd scripts/seed.py
     else
       warn "No seed.py or scripts/seed.py found"
     fi
@@ -365,9 +277,9 @@ reset_alembic() {
 
   if [[ "$DEMO" == true ]]; then
     if [[ -f "seed_demo.py" ]]; then
-      run $python_cmd seed_demo.py
+      run $py_cmd seed_demo.py
     elif [[ -f "scripts/seed_demo.py" ]]; then
-      run $python_cmd scripts/seed_demo.py
+      run $py_cmd scripts/seed_demo.py
     else
       warn "No seed_demo.py found for demo seeding"
     fi
@@ -377,16 +289,13 @@ reset_alembic() {
 }
 
 reset_go_migrate() {
-  # golang-migrate or similar
   need_cmd migrate
 
-  # Need DATABASE_URL or similar
   local db_url="${DATABASE_URL:-}"
   local migrations_path="./migrations"
   [[ -d "db/migrations" ]] && migrations_path="./db/migrations"
 
   if [[ -z "$db_url" ]]; then
-    # Try to load from .env
     if [[ -f ".env" ]]; then
       db_url=$(grep -E "^DATABASE_URL=" .env | cut -d'=' -f2- | tr -d '"' | tr -d "'")
     fi
@@ -398,7 +307,6 @@ reset_go_migrate() {
   run migrate -path "$migrations_path" -database "$db_url" up
 
   if [[ "$SEED" == true || "$DEMO" == true ]]; then
-    # Convention: look for seed binary or script
     if [[ -f "cmd/seed/main.go" ]]; then
       run go run cmd/seed/main.go
     elif [[ -f "scripts/seed.go" ]]; then
@@ -426,23 +334,42 @@ reset_go_migrate() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 main() {
-  local env
-  env=$(detect_env)
+  local stack
+  stack=$(detect_stack)
 
-  log "Detected environment: $env"
+  if [[ "$SHOW_STACK" == true ]]; then
+    echo "Detected stack: $(stack_name "$stack") ($stack)"
+    exit 0
+  fi
 
-  case "$env" in
-    laravel)   reset_laravel ;;
-    prisma)    reset_prisma ;;
-    drizzle)   reset_drizzle ;;
-    knex)      reset_knex ;;
-    sequelize) reset_sequelize ;;
-    typeorm)   reset_typeorm ;;
-    django)    reset_django ;;
-    alembic)   reset_alembic ;;
-    go-migrate) reset_go_migrate ;;
-    unknown)
-      die "Could not detect project type. Supported: Laravel, Prisma, Drizzle, Knex, Sequelize, TypeORM, Django, Flask/Alembic, Go"
+  if [[ "$stack" == "$STACK_UNKNOWN" ]]; then
+    die "Could not detect project stack. See STACKS.md for supported stacks."
+  fi
+
+  # Check stack restrictions
+  if ! is_stack_allowed "$stack"; then
+    die "Stack '$stack' is not allowed by your tynn.config"
+  fi
+
+  log "Detected stack: $(stack_name "$stack")"
+
+  case "$stack" in
+    "$STACK_LARAVEL")        reset_laravel ;;
+    "$STACK_NODE_PRISMA")    reset_node_prisma ;;
+    "$STACK_NODE_DRIZZLE")   reset_node_drizzle ;;
+    "$STACK_NODE_KNEX")      reset_node_knex ;;
+    "$STACK_NODE_SEQUELIZE") reset_node_sequelize ;;
+    "$STACK_NODE_TYPEORM")   reset_node_typeorm ;;
+    "$STACK_NODE")
+      warn "Generic Node.js project detected. No specific ORM found."
+      warn "Supported ORMs: Prisma, Drizzle, Knex, Sequelize, TypeORM"
+      die "Cannot reset database without a recognized ORM"
+      ;;
+    "$STACK_DJANGO")         reset_django ;;
+    "$STACK_FLASK_ALEMBIC")  reset_flask_alembic ;;
+    "$STACK_GO_MIGRATE")     reset_go_migrate ;;
+    *)
+      die "Reset not implemented for stack: $(stack_name "$stack")"
       ;;
   esac
 }

@@ -3,8 +3,9 @@
 #
 # Usage:
 #   sandbox <command> [args...]    - Run command in sandbox directory
-#   sandbox                        - cd to sandbox directory (in subshell)
-#   sandbox --path                 - Print sandbox path
+#   sandbox                        - Show sandbox path and stack
+#   sandbox --path                 - Print sandbox path only
+#   sandbox --stack                - Show detected stack in sandbox
 #   sandbox --help                 - Show this help
 #
 # Configuration:
@@ -14,8 +15,13 @@
 #   sandbox resetme --demo
 #   sandbox php artisan migrate
 #   sandbox npm run dev
+#   sandbox puse pest
 
 set -euo pipefail
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Setup
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Source bashrc to load aliases
 if [[ -f "${HOME}/.bashrc" ]]; then
@@ -23,26 +29,18 @@ if [[ -f "${HOME}/.bashrc" ]]; then
   shopt -s expand_aliases 2>/dev/null || true
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-die()  { printf "❌ %s\n" "$*" >&2; exit 1; }
-info() { printf "⚡ %s\n" "$*"; }
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Find tynn.config
-# ─────────────────────────────────────────────────────────────────────────────
-
+# Find script directory and source libraries
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$REPO_ROOT/tynn.config"
 
+source "$REPO_ROOT/lib/helpers.sh"
+source "$REPO_ROOT/lib/stacks.sh"
+
+# Source config
+CONFIG_FILE="$REPO_ROOT/tynn.config"
 if [[ ! -f "$CONFIG_FILE" ]]; then
   die "tynn.config not found. Copy tynn.config.example to tynn.config and set SANDBOX_PATH"
 fi
-
-# Source config
 source "$CONFIG_FILE"
 
 if [[ -z "${SANDBOX_PATH:-}" ]]; then
@@ -58,16 +56,23 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [[ $# -eq 0 ]]; then
-  # No args - just print path and hint
-  echo "$SANDBOX_PATH"
+  # No args - show path and detected stack
+  echo "Sandbox: $SANDBOX_PATH"
+  # Detect stack in sandbox directory
+  (cd "$SANDBOX_PATH" && echo "Stack: $(stack_name "$(detect_stack)")")
   echo ""
-  echo "💡 Use: cd \$(sandbox) to change to sandbox directory"
+  echo "💡 Use: sandbox <command> to run in sandbox"
+  echo "💡 Use: cd \$(sandbox --path) to change directory"
   exit 0
 fi
 
 case "$1" in
   --path)
     echo "$SANDBOX_PATH"
+    exit 0
+    ;;
+  --stack)
+    (cd "$SANDBOX_PATH" && echo "$(stack_name "$(detect_stack)")")
     exit 0
     ;;
   --help|-h)
@@ -83,7 +88,7 @@ esac
 cmd="$1"
 shift
 
-info "Running in: $SANDBOX_PATH"
+log "Running in: $SANDBOX_PATH"
 
 # Build command string with proper quoting
 cmd_str="$cmd"
