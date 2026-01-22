@@ -302,3 +302,143 @@ is_go_stack() {
   local stack="$1"
   [[ "$stack" == "go-migrate" ]]
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Runtime Resolution
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Find PHP executable, checking Herd CLI and common install paths
+# Returns the command/path to use for PHP
+php_cmd() {
+  # Laravel Herd CLI (preferred - respects site isolation)
+  if command -v herd >/dev/null 2>&1; then
+    # Use 'herd which-php' to get the exact binary for current directory
+    local herd_php
+    herd_php=$(herd which-php 2>/dev/null)
+    if [[ -n "$herd_php" && -x "$herd_php" ]]; then
+      echo "$herd_php"
+      return
+    fi
+    # Fallback to 'herd php' proxy command
+    echo "herd php"
+    return
+  fi
+
+  # Already in PATH and working?
+  if command -v php >/dev/null 2>&1; then
+    if php --version >/dev/null 2>&1; then
+      echo "php"
+      return
+    fi
+  fi
+
+  local candidates=()
+
+  # Laravel Herd bin directory (Windows)
+  if [[ -n "${USERPROFILE:-}" ]]; then
+    local herd_bin="$USERPROFILE/.config/herd/bin"
+    if [[ -d "$herd_bin" ]]; then
+      # Check for php or php.exe in herd bin
+      [[ -x "$herd_bin/php.exe" ]] && candidates+=("$herd_bin/php.exe")
+      [[ -x "$herd_bin/php" ]] && candidates+=("$herd_bin/php")
+    fi
+  fi
+
+  # Laravel Herd (macOS)
+  if [[ -d "$HOME/Library/Application Support/Herd/bin" ]]; then
+    candidates+=("$HOME/Library/Application Support/Herd/bin/php")
+  fi
+  if [[ -d "$HOME/.config/herd/bin" ]]; then
+    candidates+=("$HOME/.config/herd/bin/php")
+  fi
+
+  # Laragon (Windows)
+  candidates+=("/c/laragon/bin/php/php-8.4/php.exe")
+  candidates+=("/c/laragon/bin/php/php-8.3/php.exe")
+  candidates+=("/c/laragon/bin/php/php-8.2/php.exe")
+
+  # XAMPP (Windows)
+  candidates+=("/c/xampp/php/php.exe")
+
+  # WAMP (Windows)
+  candidates+=("/c/wamp64/bin/php/php8.4/php.exe")
+  candidates+=("/c/wamp64/bin/php/php8.3/php.exe")
+
+  # Scoop (Windows)
+  if [[ -n "${USERPROFILE:-}" ]]; then
+    candidates+=("$USERPROFILE/scoop/apps/php/current/php.exe")
+  fi
+
+  # Homebrew (macOS)
+  candidates+=("/opt/homebrew/bin/php")
+  candidates+=("/usr/local/bin/php")
+
+  # Check each candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return
+    fi
+  done
+
+  # Fallback - let it fail with a clear error later
+  echo "php"
+}
+
+# Find Python executable
+# Returns python3, python, or full path
+python_cmd() {
+  # Prefer python3
+  if command -v python3 >/dev/null 2>&1; then
+    echo "python3"
+    return
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    echo "python"
+    return
+  fi
+
+  # Windows Python launcher
+  if command -v py >/dev/null 2>&1; then
+    echo "py"
+    return
+  fi
+
+  # Fallback
+  echo "python"
+}
+
+# Find Go executable
+# Returns go or full path
+go_cmd() {
+  if command -v go >/dev/null 2>&1; then
+    echo "go"
+    return
+  fi
+
+  local candidates=()
+
+  # GOROOT
+  if [[ -n "${GOROOT:-}" && -x "$GOROOT/bin/go" ]]; then
+    candidates+=("$GOROOT/bin/go")
+  fi
+
+  # Common paths
+  candidates+=("/usr/local/go/bin/go")
+  candidates+=("/opt/homebrew/bin/go")
+
+  # Scoop (Windows)
+  if [[ -n "${USERPROFILE:-}" ]]; then
+    candidates+=("$USERPROFILE/scoop/apps/go/current/bin/go.exe")
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return
+    fi
+  done
+
+  echo "go"
+}

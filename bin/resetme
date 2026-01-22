@@ -80,9 +80,15 @@ run() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 reset_laravel() {
-  need_cmd php
+  local php
+  php=$(php_cmd)
 
-  local cmd="php artisan migrate:fresh"
+  # Verify PHP is available
+  if ! "$php" --version >/dev/null 2>&1; then
+    die "PHP not found. Checked: Herd, Laragon, XAMPP, WAMP, scoop, PATH"
+  fi
+
+  local cmd="$php artisan migrate:fresh"
 
   if [[ "$SEED" == true ]]; then
     cmd="$cmd --seed"
@@ -91,7 +97,7 @@ reset_laravel() {
   run $cmd
 
   if [[ "$DEMO" == true ]]; then
-    run php artisan db:seed --class=DemoSeeder
+    run "$php" artisan db:seed --class=DemoSeeder
   fi
 
   ok "Laravel database reset complete"
@@ -220,20 +226,23 @@ reset_node_typeorm() {
 }
 
 reset_django() {
-  local py_cmd="python"
-  command -v python3 >/dev/null 2>&1 && py_cmd="python3"
-  need_cmd "$py_cmd"
+  local py
+  py=$(python_cmd)
 
-  run $py_cmd manage.py flush --no-input
-  run $py_cmd manage.py migrate
+  if ! "$py" --version >/dev/null 2>&1; then
+    die "Python not found"
+  fi
+
+  run $py manage.py flush --no-input
+  run $py manage.py migrate
 
   if [[ "$SEED" == true ]]; then
     if [[ -d "fixtures" ]]; then
       for fixture in fixtures/*.json; do
-        [[ -f "$fixture" ]] && run $py_cmd manage.py loaddata "$fixture"
+        [[ -f "$fixture" ]] && run $py manage.py loaddata "$fixture"
       done
-    elif $py_cmd manage.py help seed >/dev/null 2>&1; then
-      run $py_cmd manage.py seed
+    elif $py manage.py help seed >/dev/null 2>&1; then
+      run $py manage.py seed
     else
       warn "No fixtures/ directory or seed command found"
     fi
@@ -241,9 +250,9 @@ reset_django() {
 
   if [[ "$DEMO" == true ]]; then
     if [[ -f "fixtures/demo.json" ]]; then
-      run $py_cmd manage.py loaddata fixtures/demo.json
-    elif $py_cmd manage.py help seed_demo >/dev/null 2>&1; then
-      run $py_cmd manage.py seed_demo
+      run $py manage.py loaddata fixtures/demo.json
+    elif $py manage.py help seed_demo >/dev/null 2>&1; then
+      run $py manage.py seed_demo
     else
       warn "No fixtures/demo.json or seed_demo command found for demo seeding"
     fi
@@ -253,9 +262,12 @@ reset_django() {
 }
 
 reset_flask_alembic() {
-  local py_cmd="python"
-  command -v python3 >/dev/null 2>&1 && py_cmd="python3"
-  need_cmd "$py_cmd"
+  local py
+  py=$(python_cmd)
+
+  if ! "$py" --version >/dev/null 2>&1; then
+    die "Python not found"
+  fi
 
   if command -v flask >/dev/null 2>&1 && [[ -f "migrations/alembic.ini" ]]; then
     run flask db downgrade base
@@ -267,9 +279,9 @@ reset_flask_alembic() {
 
   if [[ "$SEED" == true || "$DEMO" == true ]]; then
     if [[ -f "seed.py" ]]; then
-      run $py_cmd seed.py
+      run $py seed.py
     elif [[ -f "scripts/seed.py" ]]; then
-      run $py_cmd scripts/seed.py
+      run $py scripts/seed.py
     else
       warn "No seed.py or scripts/seed.py found"
     fi
@@ -277,9 +289,9 @@ reset_flask_alembic() {
 
   if [[ "$DEMO" == true ]]; then
     if [[ -f "seed_demo.py" ]]; then
-      run $py_cmd seed_demo.py
+      run $py seed_demo.py
     elif [[ -f "scripts/seed_demo.py" ]]; then
-      run $py_cmd scripts/seed_demo.py
+      run $py scripts/seed_demo.py
     else
       warn "No seed_demo.py found for demo seeding"
     fi
@@ -290,6 +302,9 @@ reset_flask_alembic() {
 
 reset_go_migrate() {
   need_cmd migrate
+
+  local go
+  go=$(go_cmd)
 
   local db_url="${DATABASE_URL:-}"
   local migrations_path="./migrations"
@@ -308,9 +323,9 @@ reset_go_migrate() {
 
   if [[ "$SEED" == true || "$DEMO" == true ]]; then
     if [[ -f "cmd/seed/main.go" ]]; then
-      run go run cmd/seed/main.go
+      run "$go" run cmd/seed/main.go
     elif [[ -f "scripts/seed.go" ]]; then
-      run go run scripts/seed.go
+      run "$go" run scripts/seed.go
     else
       warn "No cmd/seed/main.go or scripts/seed.go found"
     fi
@@ -318,9 +333,9 @@ reset_go_migrate() {
 
   if [[ "$DEMO" == true ]]; then
     if [[ -f "cmd/seed/main.go" ]]; then
-      run go run cmd/seed/main.go --demo
+      run "$go" run cmd/seed/main.go --demo
     elif [[ -f "scripts/seed_demo.go" ]]; then
-      run go run scripts/seed_demo.go
+      run "$go" run scripts/seed_demo.go
     else
       warn "No demo seed found (use --demo flag in seed or create scripts/seed_demo.go)"
     fi
