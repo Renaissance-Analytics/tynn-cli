@@ -10,6 +10,7 @@
 # Options:
 #   --lic <name|index>       - Use license from tynn.config (by name or index)
 #   --browser                - Enable browser testing (for pest, playwright)
+#   --force                  - Force reinstall even if already installed
 #
 # Tools by Stack:
 #   Laravel:     pest, pest --browser, flux (requires --lic)
@@ -55,6 +56,120 @@ fi
 
 LIC_REF=""
 BROWSER_FLAG=false
+FORCE_FLAG=false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Installation Checks
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Check if pest is installed (with optional browser support check)
+is_pest_installed() {
+  local check_browser="${1:-false}"
+
+  # Check base Pest installation
+  if ! composer show pestphp/pest >/dev/null 2>&1; then
+    return 1
+  fi
+
+  # If browser flag, also check browser plugin
+  if [[ "$check_browser" == "true" ]]; then
+    if ! composer show pestphp/pest-plugin-browser >/dev/null 2>&1; then
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
+# Check if vitest is installed
+is_vitest_installed() {
+  [[ -f "package.json" ]] && grep -q '"vitest"' package.json
+}
+
+# Check if jest is installed
+is_jest_installed() {
+  [[ -f "package.json" ]] && grep -q '"jest"' package.json
+}
+
+# Check if playwright is installed (node version)
+is_playwright_node_installed() {
+  [[ -f "package.json" ]] && grep -q '"@playwright/test"' package.json
+}
+
+# Check if pytest-django is installed
+is_pytest_installed() {
+  local py_cmd="python"
+  command -v python3 >/dev/null 2>&1 && py_cmd="python3"
+
+  $py_cmd -c "import pytest" 2>/dev/null
+}
+
+# Check if flux is installed
+is_flux_installed() {
+  composer show livewire/flux-pro >/dev/null 2>&1
+}
+
+# Check if tool is already installed and handle accordingly
+# Returns 0 if should proceed, 1 if should skip
+check_already_installed() {
+  local tool="$1"
+  local stack="$2"
+  local installed=false
+
+  case "$tool" in
+    pest)
+      if is_pest_installed "$BROWSER_FLAG"; then
+        installed=true
+      fi
+      ;;
+    vitest)
+      if is_vitest_installed; then
+        installed=true
+      fi
+      ;;
+    jest)
+      if is_jest_installed; then
+        installed=true
+      fi
+      ;;
+    playwright)
+      if [[ "$stack" == "laravel" ]]; then
+        if is_pest_installed "true"; then
+          installed=true
+        fi
+      elif is_node_stack "$stack"; then
+        if is_playwright_node_installed; then
+          installed=true
+        fi
+      fi
+      ;;
+    pytest)
+      if is_pytest_installed; then
+        installed=true
+      fi
+      ;;
+    flux)
+      if is_flux_installed; then
+        installed=true
+      fi
+      ;;
+  esac
+
+  if [[ "$installed" == "true" ]]; then
+    if [[ "$FORCE_FLAG" == "true" ]]; then
+      warn "$tool is already installed, reinstalling due to --force"
+      return 0
+    else
+      local browser_note=""
+      [[ "$tool" == "pest" && "$BROWSER_FLAG" == "true" ]] && browser_note=" (with browser support)"
+      [[ "$tool" == "playwright" && "$stack" == "laravel" ]] && browser_note=" (via pest browser plugin)"
+      ok "$tool is already installed${browser_note}. Use --force to reinstall."
+      return 1
+    fi
+  fi
+
+  return 0
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool Installers
@@ -401,6 +516,11 @@ route_tool() {
     die "Tool '$tool' is not supported for $(stack_name "$stack"). Available: $available"
   fi
 
+  # Check if already installed
+  if ! check_already_installed "$tool" "$stack"; then
+    return 0
+  fi
+
   # Route to installer
   case "$tool" in
     pest)
@@ -521,6 +641,10 @@ parse_args() {
         ;;
       --browser)
         BROWSER_FLAG=true
+        shift
+        ;;
+      --force|-f)
+        FORCE_FLAG=true
         shift
         ;;
       -*)
