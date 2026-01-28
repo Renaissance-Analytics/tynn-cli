@@ -261,6 +261,7 @@ stack_name() {
     django)         echo "Django (Python)" ;;
     flask-alembic)  echo "Flask + Alembic (Python)" ;;
     go-migrate)     echo "Go + Migrate" ;;
+    ai)             echo "AI Tools" ;;
     *)              echo "Unknown" ;;
   esac
 }

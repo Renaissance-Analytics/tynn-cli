@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# proto1 - Nexus AI Terminal launcher
+# Usage: proto1 [options] [prompt]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Run with tsx in development, node in production
+if [[ -f "$APP_DIR/src/index.tsx" ]]; then
+  exec npx tsx "$APP_DIR/src/index.tsx" "$@"
+else
+  exec node "$APP_DIR/dist/index.js" "$@"
+fi

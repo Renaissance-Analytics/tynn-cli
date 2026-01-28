@@ -3,6 +3,7 @@
 #
 # Usage:
 #   puse <tool> [options]    - Install/configure a tool for the detected stack
+#   puse <domain>.<tool>     - Install tool for specific stack domain
 #   puse --list              - List available tools for detected stack
 #   puse --stack             - Show detected stack
 #   puse --help              - Show this help
@@ -11,18 +12,27 @@
 #   --lic <name|index>       - Use license from tynn.config (by name or index)
 #   --browser                - Enable browser testing (for pest, playwright)
 #   --force                  - Force reinstall even if already installed
+#   --config <json|file>     - MCP server config (for ai.mcp)
+#   --ai <systems>           - Comma-separated AI systems (for ai.mcp)
+#   --no-interaction         - Skip all prompts, assume yes
 #
 # Tools by Stack:
-#   Laravel:     pest, pest --browser, flux (requires --lic)
+#   Laravel:     pest, pest --browser, flux (requires --lic), boost
 #   Node.js:     vitest, jest, playwright, prisma, drizzle
 #   Django:      pytest, playwright
+#   AI:          mcp (configure MCP servers for AI systems)
 #   Go:          (coming soon)
+#
+# AI Systems (for ai.mcp --ai):
+#   claude-code, claude-desktop, cursor, windsurf, vscode, continue, zed
 #
 # Examples:
 #   puse pest                - Install Pest (Laravel)
 #   puse pest --browser      - Install Pest with browser testing
 #   puse flux --lic myflux   - Install Flux Pro with license
 #   puse vitest              - Install Vitest (Node.js)
+#   puse ai.mcp              - Configure MCP server (interactive)
+#   puse ai.mcp --config '{"command":"node","args":["server.js"]}' --ai cursor,claude-code
 
 set -euo pipefail
 
@@ -43,6 +53,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$REPO_ROOT/lib/helpers.sh"
 source "$REPO_ROOT/lib/stacks.sh"
 source "$REPO_ROOT/lib/licenses.sh"
+source "$REPO_ROOT/lib/ui.sh"
+source "$REPO_ROOT/lib/mcp.sh"
 
 # Source config if exists
 CONFIG_FILE="$REPO_ROOT/tynn.config"
@@ -57,6 +69,9 @@ fi
 LIC_REF=""
 BROWSER_FLAG=false
 FORCE_FLAG=false
+MCP_CONFIG=""
+AI_SYSTEMS=""
+NO_INTERACTION=false
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Installation Checks
@@ -109,6 +124,16 @@ is_flux_installed() {
   composer show livewire/flux-pro >/dev/null 2>&1
 }
 
+# Check if boost is installed
+is_boost_installed() {
+  composer show laravel/boost >/dev/null 2>&1
+}
+
+# MCP is always "installable" (it's config, not a package)
+is_mcp_installed() {
+  return 1  # Always allow re-running
+}
+
 # Check if tool is already installed and handle accordingly
 # Returns 0 if should proceed, 1 if should skip
 check_already_installed() {
@@ -152,6 +177,15 @@ check_already_installed() {
       if is_flux_installed; then
         installed=true
       fi
+      ;;
+    boost)
+      if is_boost_installed; then
+        installed=true
+      fi
+      ;;
+    mcp)
+      # MCP is config-based, always allow (unless specific check needed)
+      installed=false
       ;;
   esac
 
@@ -401,10 +435,6 @@ install_flux() {
   log "Installing Flux Pro package..."
   composer require livewire/flux-pro >/dev/null 2>&1 && ok "Flux Pro installed" || die "Flux Pro install failed"
 
-  # Publish assets and run install
-  log "Running Flux installation..."
-  php artisan flux:install
-
   echo ""
   ok "Flux Pro setup complete!"
   echo ""
@@ -451,6 +481,210 @@ EOF
   echo "🚀 Run tests with: pytest"
 }
 
+install_boost() {
+  need_cmd composer
+  need_file artisan
+
+  log "Installing Laravel Boost..."
+
+  # Install via composer
+  composer require laravel/boost --dev >/dev/null 2>&1 && ok "Laravel Boost installed" || die "Boost install failed"
+
+  echo ""
+  ok "Laravel Boost package installed!"
+  echo ""
+  warn "Run 'php artisan boost:install' manually to complete setup (interactive)"
+  echo ""
+  echo "💡 Documentation: https://laravel.com/docs/12.x/boost"
+}
+
+install_mcp() {
+  local mcp_config="$MCP_CONFIG"
+  local ai_systems="$AI_SYSTEMS"
+  local no_interaction="$NO_INTERACTION"
+
+  need_cmd node
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 1: Get MCP config
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  if [[ -z "$mcp_config" ]]; then
+    if [[ "$no_interaction" == "true" ]]; then
+      die "MCP config required in non-interactive mode. Use --config"
+    fi
+
+    echo ""
+    echo "${BOLD}MCP Server Configuration${RESET}"
+    echo ""
+
+    local server_name
+    local command
+    local args
+    local env_vars
+
+    server_name=$(prompt_input "Server name" "my-mcp-server")
+    command=$(prompt_input "Command" "node")
+    args=$(prompt_input "Arguments (comma-separated)" "")
+    env_vars=$(prompt_input "Environment variables (KEY=value,KEY2=value2)" "")
+
+    mcp_config=$(generate_mcp_config "$server_name" "$command" "$args" "$env_vars")
+
+    echo ""
+    log "Generated config:"
+    echo "$mcp_config" | node -e "console.log(JSON.stringify(JSON.parse(require('fs').readFileSync(0, 'utf8')), null, 2))"
+    echo ""
+  else
+    # Parse config from file or string
+    if [[ -f "$mcp_config" ]]; then
+      mcp_config=$(cat "$mcp_config")
+    fi
+  fi
+
+  # Extract server name from config or use default
+  local server_name
+  server_name=$(echo "$mcp_config" | node -e "
+    const config = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    console.log(config.name || 'mcp-server');
+  " 2>/dev/null || echo "mcp-server")
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 2: Select AI systems
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  local selected_systems=()
+
+  if [[ -n "$ai_systems" ]]; then
+    # Parse comma-separated list
+    IFS=',' read -ra selected_systems <<< "$ai_systems"
+  elif [[ "$no_interaction" == "true" ]]; then
+    die "AI systems required in non-interactive mode. Use --ai"
+  else
+    echo ""
+    echo "${BOLD}Select AI systems to configure:${RESET}"
+    echo "${DIM}(Use arrow keys, space to toggle, enter to confirm)${RESET}"
+    echo ""
+
+    local options=("All" "Claude Code" "Claude Desktop" "Cursor" "Windsurf" "VS Code (Copilot)" "Continue (VS Code)" "Zed")
+    local system_keys=("" "claude-code" "claude-desktop" "cursor" "windsurf" "vscode" "continue" "zed")
+
+    # Simplified selection for non-TTY
+    if ! is_tty; then
+      echo "Available systems:"
+      for i in "${!options[@]}"; do
+        [[ $i -eq 0 ]] && continue
+        echo "  $i. ${options[$i]}"
+      done
+      echo ""
+      local selection
+      selection=$(prompt_input "Enter numbers (comma-separated, or 'all')" "all")
+
+      if [[ "$selection" == "all" ]]; then
+        selected_systems=("${system_keys[@]:1}")
+      else
+        IFS=',' read -ra indices <<< "$selection"
+        for idx in "${indices[@]}"; do
+          idx=$(echo "$idx" | tr -d ' ')
+          if [[ -n "${system_keys[$idx]:-}" ]]; then
+            selected_systems+=("${system_keys[$idx]}")
+          fi
+        done
+      fi
+    else
+      # Interactive checkbox selection
+      local selected_indices
+      selected_indices=$(checkbox_select "Select AI systems:" "${options[@]}")
+
+      for idx in $selected_indices; do
+        if [[ -n "${system_keys[$idx]:-}" ]]; then
+          selected_systems+=("${system_keys[$idx]}")
+        fi
+      done
+    fi
+  fi
+
+  if [[ ${#selected_systems[@]} -eq 0 ]]; then
+    die "No AI systems selected"
+  fi
+
+  echo ""
+  log "Selected systems: ${selected_systems[*]}"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 3: Confirm and apply
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  local changes=()
+  local total=${#selected_systems[@]}
+  local current=0
+
+  # Preview changes
+  echo ""
+  echo "${BOLD}Changes to be made:${RESET}"
+  for system in "${selected_systems[@]}"; do
+    local path scope="project"
+    path=$(get_ai_config_path "$system" "$scope")
+
+    # Fall back to user scope if no project path
+    if [[ -z "$path" || "$path" == ".continue/mcpServers" ]]; then
+      scope="user"
+      path=$(get_ai_config_path "$system" "$scope")
+    fi
+
+    local status="create"
+    [[ -f "$path" ]] && status="update"
+
+    echo "  ${AI_SYSTEMS[$system]:-$system}: $path ($status)"
+    changes+=("$system|$path|$status")
+  done
+
+  echo ""
+
+  # Get confirmation unless no-interaction
+  if [[ "$no_interaction" != "true" ]]; then
+    if ! confirm "Apply these changes?"; then
+      echo "Cancelled."
+      return 0
+    fi
+  fi
+
+  # Apply changes with progress bar
+  echo ""
+  for change in "${changes[@]}"; do
+    IFS='|' read -r system path status <<< "$change"
+    ((current++))
+
+    progress_bar "$current" "$total" "Configuring ${AI_SYSTEMS[$system]:-$system}"
+
+    local key
+    key=$(get_mcp_key "$system")
+
+    if [[ "$system" == "continue" ]]; then
+      add_continue_server "$server_name" "$mcp_config"
+    else
+      add_mcp_server "$path" "$key" "$server_name" "$mcp_config"
+    fi
+
+    sleep 0.2  # Brief pause for visual feedback
+  done
+
+  progress_done
+
+  # Summary
+  echo ""
+  ok "MCP configuration complete!"
+  echo ""
+  echo "${BOLD}Summary:${RESET}"
+  for change in "${changes[@]}"; do
+    IFS='|' read -r system path status <<< "$change"
+    local action_icon="✅"
+    local action_text="configured"
+    echo "  $action_icon ${AI_SYSTEMS[$system]:-$system}: $path"
+  done
+  echo ""
+  echo "💡 Restart your AI tools to load the new MCP server"
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool Routing
 # ─────────────────────────────────────────────────────────────────────────────
@@ -459,12 +693,19 @@ EOF
 declare -A TOOL_STACKS=(
   ["pest"]="laravel"
   ["flux"]="laravel"
+  ["boost"]="laravel"
   ["vitest"]="node node-prisma node-drizzle node-knex node-sequelize node-typeorm"
   ["jest"]="node node-prisma node-drizzle node-knex node-sequelize node-typeorm"
   ["playwright"]="laravel node node-prisma node-drizzle node-knex node-sequelize node-typeorm django"
   ["pytest"]="django flask-alembic"
   ["prisma"]="node"
   ["drizzle"]="node"
+  ["mcp"]="ai"
+)
+
+# Stack domains that don't require project detection
+declare -A DOMAIN_STACKS=(
+  ["ai"]="true"
 )
 
 # Tools that require licenses
@@ -568,6 +809,17 @@ route_tool() {
       install_pytest_django
       ;;
 
+    boost)
+      if [[ "$stack" != "laravel" ]]; then
+        die "Boost is only for Laravel"
+      fi
+      install_boost
+      ;;
+
+    mcp)
+      install_mcp
+      ;;
+
     *)
       die "Unknown tool: $tool"
       ;;
@@ -647,6 +899,24 @@ parse_args() {
         FORCE_FLAG=true
         shift
         ;;
+      --config)
+        if [[ -z "${2:-}" ]]; then
+          die "--config requires a JSON config or file path"
+        fi
+        MCP_CONFIG="$2"
+        shift 2
+        ;;
+      --ai)
+        if [[ -z "${2:-}" ]]; then
+          die "--ai requires comma-separated AI systems"
+        fi
+        AI_SYSTEMS="$2"
+        shift 2
+        ;;
+      --no-interaction)
+        NO_INTERACTION=true
+        shift
+        ;;
       -*)
         die "Unknown option: $1. Use --help for usage."
         ;;
@@ -667,18 +937,68 @@ parse_args() {
 }
 
 main() {
-  local tool
-  tool=$(parse_args "$@")
+  local input
+  input=$(parse_args "$@")
 
-  local stack
-  stack=$(detect_stack)
+  local domain=""
+  local tools=()
 
-  if [[ "$stack" == "$STACK_UNKNOWN" ]]; then
-    die "Could not detect project stack. Are you in a project directory?"
+  # Parse domain.tool or domain.tool1.tool2 syntax
+  if [[ "$input" == *.* ]]; then
+    # Split by dots
+    IFS='.' read -ra parts <<< "$input"
+    domain="${parts[0]}"
+
+    # Rest are tools
+    for ((i=1; i<${#parts[@]}; i++)); do
+      tools+=("${parts[$i]}")
+    done
+  else
+    # Single tool, detect stack
+    tools=("$input")
   fi
 
-  log "Detected stack: $(stack_name "$stack")"
-  route_tool "$tool" "$stack"
+  local stack
+
+  # Handle domain-based routing
+  if [[ -n "$domain" ]]; then
+    # Check if it's a special domain (like "ai") that doesn't need project detection
+    if [[ -v DOMAIN_STACKS[$domain] ]]; then
+      stack="$domain"
+      log "Using stack domain: $domain"
+    else
+      # Domain specifies expected stack - verify it matches
+      stack=$(detect_stack)
+
+      if [[ "$stack" == "$STACK_UNKNOWN" ]]; then
+        die "Could not detect project stack. Are you in a project directory?"
+      fi
+
+      # Check if domain matches detected stack (allow partial match)
+      if [[ "$stack" != "$domain"* && "$domain" != "$stack"* ]]; then
+        warn "Requested domain '$domain' but detected '$stack'"
+        if ! confirm "Continue anyway?"; then
+          die "Aborted"
+        fi
+      fi
+
+      log "Detected stack: $(stack_name "$stack") (domain: $domain)"
+    fi
+  else
+    # No domain, detect stack normally
+    stack=$(detect_stack)
+
+    if [[ "$stack" == "$STACK_UNKNOWN" ]]; then
+      die "Could not detect project stack. Are you in a project directory?"
+    fi
+
+    log "Detected stack: $(stack_name "$stack")"
+  fi
+
+  # Install each tool in order
+  for tool in "${tools[@]}"; do
+    route_tool "$tool" "$stack"
+  done
 }
 
 main "$@"
